@@ -1,12 +1,45 @@
 # third projects for CV description
 
+after cloning the repo and going to repo folder do (optionally activating virtual env):
+- On Linux/macOS: bash setup.sh
+- On Windows: double-click setup.bat or run in Command Prompt
+
+
 ## setup
 ogólnie tu jest fajny samouczek gdzie masz też windowsowe comendy bo się czasem różnią
 - https://doc.dvc.org/start?tab=Mac-Linux
+
+Add remote for dataset storage
+
+    `dvc remote add -d origin https://dagshub.com/StickStickens/Project3-CV-segmentation-inpainting.dvc`
+
+Configure authentication (local only, does not go into Git)`
+
+    dvc remote modify --local origin auth basic
+    dvc remote modify --local origin user StickStickens
+    dvc remote modify --local origin password <YOUR_DAGSHUB_default_TOKEN>
+
+Add DagsHub remote (if not already present)
+
+    git remote add dagshub https://dagshub.com/StickStickens/Project3-CV-segmentation-inpainting.git
+
+Add GitHub remote (if not already present)
+
+    git remote add origin https://github.com/StickStickens/Project3-CV-segmentation-inpainting.git
+
+check:
+
+    git remote -v    
+        output:
+        dagshub https://dagshub.com/StickStickens/Project3-CV-segmentation-inpainting.git (fetch)
+        dagshub https://dagshub.com/StickStickens/Project3-CV-segmentation-inpainting.git (push)
+        origin  https://github.com/StickStickens/Project3-CV-segmentation-inpainting (fetch)
+        origin  https://github.com/StickStickens/Project3-CV-segmentation-inpainting (push)
 ## dvc
 
 - Initialize DVC :
-    - ```pip install dvc``` - to w setupie automatycznym jest
+    - ```pip install dvc``` - to w setupie automatycznym jest (nie wiem czy potrzebne)
+    - ```pip install "dvc[s3]"``` i to też
     - ```dvc init``` - ja to już zrobiłem i ty już nie musisz
 
 ### DVC usage
@@ -41,8 +74,7 @@ other commands:
 - ```dvc status```- Shows tracked files and whether they are up-to-date locally
 - ```dvc list .``` - shows local dvc fiels
 
-git push
-- `git push origin main`
+- `git push origin main` to push to github
 
 there is option to store everything locally in some folder but i decided to store it publically so both of us can access data
 **When to put a dataset in DVC:**
@@ -55,6 +87,20 @@ there is option to store everything locally in some folder but i decided to stor
 - Dataset is small (fits comfortably in Git, <50 MB).
 - Dataset is static and will not change.
 - You don’t mind Git tracking it directly.
+
+
+
+### in case of problems (i dont know if safe):
+dvc reset:
+`# Remove old DVC config and cache`
+`rm -rf .dvc`
+`rm -f .dvc/config .dvc/config.local`
+`rm -rf .dvc/cache`
+`rm -rf .dvc/tmp`
+
+`# Remove old .dvc files if they exist`
+`find . -name "*.dvc" -exec rm -f {} \;`
+
 
 
 
