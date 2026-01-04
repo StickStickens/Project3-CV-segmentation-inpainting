@@ -1,0 +1,9 @@
+links:
+project descripion:
+https://docs.google.com/document/d/1tsrx8sBayKLzd75hwlBV9ifGy5UU9N3QzlBRbzGyzmA/edit?tab=t.0
+
+our modified project docs with description:
+https://docs.google.com/document/d/1nFBIAhZ2XgdyswaPf06U27jbAkUNXa6Wu-Krc_4ppdY/edit?tab=t.0
+
+our github:
+https://github.com/StickStickens/Project3-CV-segmentation-inpainting
