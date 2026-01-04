@@ -1,0 +1,6 @@
+[core]
+    remote = origin
+['remote "dagshub_storage"']
+    url = https://dagshub.com/StickStickens/Project3-CV-segmentation-inpainting.dvc
+['remote "origin"']
+    url = https://dagshub.com/StickStickens/Project3-CV-segmentation-inpainting.dvc

@@ -41,6 +41,8 @@ other commands:
 - ```dvc status```- Shows tracked files and whether they are up-to-date locally
 - ```dvc list .``` - shows local dvc fiels
 
+git push
+- `git push origin main`
 
 there is option to store everything locally in some folder but i decided to store it publically so both of us can access data
 **When to put a dataset in DVC:**
