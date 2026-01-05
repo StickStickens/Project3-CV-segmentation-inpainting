@@ -100,7 +100,7 @@ there is option to store everything locally in some folder but i decided to stor
 
 
 
-#### in case of problems (i dont know if safe):
+#### in case of problems (i dont know if safe, lepiej nie uzywać i się z ekspertami skonsultować):
 dvc reset:
 `# Remove old DVC config and cache`
 `rm -rf .dvc`
@@ -111,6 +111,49 @@ dvc reset:
 `# Remove old .dvc files if they exist`
 `find . -name "*.dvc" -exec rm -f {} \;`
 
+### MLops integration
+
+ogólnie jesłi chodzi o mlflowoe rzeczyt to tego się nie integruje z DVC w żaden sposób więc tobie to zostawiam ale nie wydaje sie trudne
+ogólnie wpierw w pythonie piszesz jakie te parametry są:
+```python
+import mlflow   # or wandb, neptune
+mlflow.start_run()    # MLflow
+mlflow.log_param("learning_rate", 0.001)
+wandb.config.update({"learning_rate": 0.001})
+for epoch in range(epochs):
+    train_loss = ...
+    val_acc = ...
+    mlflow.log_metric("train_loss", train_loss, step=epoch)
+    mlflow.log_metric("val_acc", val_acc, step=epoch)
+    
+    wandb.log({"train_loss": train_loss, "val_acc": val_acc, "epoch": epoch})
+
+```
+później musisz to zapisać i wsadzić do danych modelu
+```python
+torch.save(model.state_dict(), "model.pt")
+mlflow.log_artifact("model.pt")
+mlflow.end_run()
+wandb.finish()
+```
+i w dvc już nic nie zmieniasz i  po prostu model commitujesz
+```python
+dvc add model.pt
+git add model.pt.dvc .gitignore
+git commit -m "Track trained model with DVC"
+```
+jeśli chodzi o uzyskane wyniki np accuracy to zapisujesz je w osobnych plikach i też dajesz do dvc i to podobno aotomatycznie jakiś fajnyc dashboard będzie się robił:
+```python
+metrics = {"accuracy": 0.92, "loss": 0.35}
+with open("metrics.json", "w") as f:
+    json.dump(metrics, f, indent=4)
+
+dvc add metrics.json
+git add metrics.json.dvc .gitignore
+git commit -m "Add experiment metrics"
+dvc push
+git push
+```
 
 
 ## segmantation
@@ -118,6 +161,8 @@ dataset:
 - https://ade20k.csail.mit.edu/
 
 ## inpainting
+
+## meaning recognition
 
 
 
