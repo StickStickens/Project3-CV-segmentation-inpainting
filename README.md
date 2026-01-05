@@ -43,6 +43,7 @@ check:
     - ```dvc init``` - ja to już zrobiłem i ty już nie musisz
 
 ### DVC usage
+(pamiętam - https używaj bo przez protokół s3 straciłe kilka godzin życia)
 - Track model
     - ```dvc add model.pt``` # creates model.pt.dvc - the small pointer file to dvc repo. Git tracks this file not whole model file
     - ```git add model.pt.dvc .gitignore``` 
@@ -76,6 +77,15 @@ other commands:
 
 - `git push origin main` to push to github
 
+
+#### w skrócie nowe komendy do używania:
+    
+    dvc add data/
+    git add data.dvc .gitignore
+    git commit -m "Update dataset"
+    dvc push
+
+
 there is option to store everything locally in some folder but i decided to store it publically so both of us can access data
 **When to put a dataset in DVC:**
 - The dataset is large (hundreds of MBs to GBs).
@@ -90,7 +100,7 @@ there is option to store everything locally in some folder but i decided to stor
 
 
 
-### in case of problems (i dont know if safe):
+#### in case of problems (i dont know if safe):
 dvc reset:
 `# Remove old DVC config and cache`
 `rm -rf .dvc`
@@ -104,5 +114,16 @@ dvc reset:
 
 
 ## segmantation
+dataset:
+- https://ade20k.csail.mit.edu/
 
 ## inpainting
+
+
+
+
+
+
+
+
+
