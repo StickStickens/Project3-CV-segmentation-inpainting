@@ -152,7 +152,7 @@ dvc add metrics.json
 git add metrics.json.dvc .gitignore
 git commit -m "Add experiment metrics"
 dvc push
-git push
+git push origin main
 ```
 
 
