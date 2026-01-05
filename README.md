@@ -1,12 +1,12 @@
 # third projects for CV description
 
-after cloning the repo and going to repo folder do (optionally activating virtual env):
+after cloning the repo and going to repo folder do (optionally activating virtual env) (jak to odpaliłem to wywa):
 - On Linux/macOS: bash setup.sh
 - On Windows: double-click setup.bat or run in Command Prompt
 
 
 ## setup
-ogólnie tu jest fajny samouczek gdzie masz też windowsowe comendy bo się czasem różnią
+ogólnie tu jest fajny samouczek gdzie masz też windowsowe comendy bo się czasem różnią, ale tu setupu nie ma, ale może akurat te same komendy są, chyba że na WSLu chcesz to robić żeby te same komendy linuxowe były
 - https://doc.dvc.org/start?tab=Mac-Linux
 
 Add remote for dataset storage
@@ -101,17 +101,6 @@ dvc reset:
 `# Remove old .dvc files if they exist`
 `find . -name "*.dvc" -exec rm -f {} \;`
 
-
-
-
-+---------------------------------------------------------------------+
-|        DVC has enabled anonymous aggregate usage analytics.         |
-|     Read the analytics documentation (and how to opt-out) here:     |
-|             <https://dvc.org/doc/user-guide/analytics>              |
-|                    bendom nas śledzić                               |
-+---------------------------------------------------------------------+
-- Check out the documentation: <https://dvc.org/doc>
-- Get help and share ideas: <https://dvc.org/chat>
 
 
 ## segmantation
