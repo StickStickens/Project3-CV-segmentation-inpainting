@@ -1,0 +1,16 @@
+{
+    "train_image_folder": "./data/archive/ADEChallengeData2016/images/training/",
+    "train_annotation_folder": "./data/archive/ADEChallengeData2016/annotations/training/",
+    "validation_image_folder": "./data/archive/ADEChallengeData2016/images/validation/",
+    "validation_annotation_folder": "./data/archive/ADEChallengeData2016/annotations/validation/",
+    "mean": [
+        2.0671334368671523e-06,
+        1.967431671801023e-06,
+        1.8147900391340954e-06
+    ],
+    "std": [
+        9.662993534220732e-07,
+        9.704332342153066e-07,
+        1.0166675110667711e-06
+    ]
+}
