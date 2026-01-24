@@ -28,9 +28,9 @@ def predict(model: torch.nn.Module, dataset: Dataset, device: torch.device, batc
         print("Using single GPU or CPU")
         model = torch.compile(model)
     model.to(device)
-    pin_memory = True if device.type == 'cuda' else False
+    pin_memory = device.type == 'cuda'
     model.eval()
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=pin_memory)
 
 
     for batch_idx, batch in enumerate(dataloader):
@@ -41,9 +41,9 @@ def predict(model: torch.nn.Module, dataset: Dataset, device: torch.device, batc
         outputs = outputs.cpu()
         # Here you can add code to handle the outputs, e.g., save them or return
         for i in range(outputs.size(0)):
-            output_mask = outputs[i]
+            output_mask = outputs[i].numpy().astype('uint8')  # Class indices 0-150
             save_dir = path / f"output_{batch_idx * batch_size + i}.png"
-            # Save the output mask (assuming it's a single-channel image)
-            output_image = Image.fromarray((output_mask.numpy() * 255).astype('uint8'))
+            # Save the output mask - values are class indices (grayscale)
+            output_image = Image.fromarray(output_mask, mode='L')
             output_image.save(save_dir)
     print(f"Predictions saved to {output_directory}")

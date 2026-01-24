@@ -34,23 +34,23 @@ class ADE20KDataset(Dataset):
 
 def make_train_transform(mean, std):
     """Create a joint train transform for image/mask using v2 ops."""
-    resize_crop = v2.RandomResizedCrop(size=(256, 256), antialias=True)
-    hflip = v2.RandomHorizontalFlip(p=0.5)
+    # Spatial transforms applied to both image and mask
+    spatial = v2.Compose([
+        v2.RandomResizedCrop(size=(256, 256), antialias=True),
+        v2.RandomHorizontalFlip(p=0.5),
+    ])
+    
+    # Color transforms only for image
+    jitter = v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05)
+    blur = v2.RandomApply([v2.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5))], p=0.2)
 
     def _transform(image, mask):
-        # Apply same spatial transforms to both
-        seed = torch.randint(0, 2**32, (1,)).item()
-        torch.manual_seed(seed)
-        image = resize_crop(image)
-        torch.manual_seed(seed)
-        mask = resize_crop(mask)
+        # Apply spatial transforms to both simultaneously
+        image, mask = spatial(image, mask)
 
-        torch.manual_seed(seed)
-        image = hflip(image)
-        torch.manual_seed(seed)
-        mask = hflip(mask)
-
-        # Only normalize the image
+        # Only process the image
+        image = jitter(image)
+        image = blur(image)
         image = v2.ToImage()(image)
         image = v2.ToDtype(torch.float32, scale=True)(image)
         image = v2.Normalize(mean=mean, std=std)(image)
@@ -81,7 +81,7 @@ def make_val_transform(mean, std):
 
     return _transform
 
-def get_random_subset(dataset, sample_size):
+def get_random_subset(dataset : Dataset, sample_size: int):
     """Get a random subset of the dataset of given sample size."""
     total_size = len(dataset)
     if sample_size > total_size:

@@ -44,41 +44,75 @@ class _UpBlock(nn.Module):
 
 
 class UNet(nn.Module):
-    """A lightweight UNet for 256x256 inputs/outputs."""
+    """A lightweight UNet for 256x256 inputs/outputs.
+    
+    Architecture (for 256x256 input):
+        Encoder:
+            enc1: 256×256, base_ch        (no downsampling)
+            enc2: 128×128, base_ch×2      (pool + conv)
+            enc3: 64×64,   base_ch×4      (pool + conv)
+            enc4: 32×32,   base_ch×8      (pool + conv)
+            bottleneck: 16×16, base_ch×16 (pool + conv) - deepest level
+        
+        Decoder:
+            up4: 32×32,   base_ch×8  (upsample + concat with enc4)
+            up3: 64×64,   base_ch×4  (upsample + concat with enc3)
+            up2: 128×128, base_ch×2  (upsample + concat with enc2)
+            up1: 256×256, base_ch    (upsample + concat with enc1)
+            head: 256×256, num_classes
+    """
 
     def __init__(self, in_channels: int = 3, num_classes: int = 1, base_channels: int = 64):
         super().__init__()
-        self.enc1 = _conv_block(in_channels, base_channels)
-        self.enc2 = _down_block(base_channels, base_channels * 2)
-        self.enc3 = _down_block(base_channels * 2, base_channels * 4)
-        self.enc4 = _down_block(base_channels * 4, base_channels * 8)
-        self.enc5 = _down_block(base_channels * 8, base_channels * 16)
+        # Encoder
+        self.enc1 = _conv_block(in_channels, base_channels)           # 256×256
+        self.enc2 = _down_block(base_channels, base_channels * 2)     # 128×128
+        self.enc3 = _down_block(base_channels * 2, base_channels * 4) # 64×64
+        self.enc4 = _down_block(base_channels * 4, base_channels * 8) # 32×32
+        self.bottleneck = _down_block(base_channels * 8, base_channels * 16)  # 16×16 (includes pooling!)
 
-        self.bottleneck = _conv_block(base_channels * 16, base_channels * 32)
+        # Decoder
+        self.up4 = _UpBlock(base_channels * 16, base_channels * 8)  # 32×32, skip from enc4
+        self.up3 = _UpBlock(base_channels * 8, base_channels * 4)   # 64×64, skip from enc3
+        self.up2 = _UpBlock(base_channels * 4, base_channels * 2)   # 128×128, skip from enc2
+        self.up1 = _UpBlock(base_channels * 2, base_channels)       # 256×256, skip from enc1
 
-        self.up5 = _UpBlock(base_channels * 32, base_channels * 16)
-        self.up4 = _UpBlock(base_channels * 16, base_channels * 8)
-        self.up3 = _UpBlock(base_channels * 8, base_channels * 4)
-        self.up2 = _UpBlock(base_channels * 4, base_channels * 2)
-        self.up1 = nn.Conv2d(base_channels * 2, base_channels, kernel_size=1)
-
-        self.head = nn.Conv2d(base_channels, num_classes, kernel_size=1)
+        self.head = nn.Conv2d(base_channels, num_classes, kernel_size=1, bias=True)
+        
+        # Initialize weights
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights with Kaiming for conv layers."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+        
+        # Ensure classification head has uniform logits at init
+        # This prevents bias toward certain classes before training
+        nn.init.xavier_uniform_(self.head.weight)
+        if self.head.bias is not None:
+            nn.init.zeros_(self.head.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        c1 = self.enc1(x)
-        c2 = self.enc2(c1)
-        c3 = self.enc3(c2)
-        c4 = self.enc4(c3)
-        c5 = self.enc5(c4)
-
-        bottleneck = self.bottleneck(c5)
+        # Encoder
+        c1 = self.enc1(x)           # 256×256, base_ch
+        c2 = self.enc2(c1)          # 128×128, base_ch×2
+        c3 = self.enc3(c2)          # 64×64, base_ch×4
+        c4 = self.enc4(c3)          # 32×32, base_ch×8
+        bottleneck = self.bottleneck(c4)  # 16×16, base_ch×16
 
         # Decoder: upsample and concatenate with corresponding encoder skip
-        u5 = self.up5(bottleneck, c4)  # upsample to c4 size (32x32), concat with c4
-        u4 = self.up4(u5, c3)          # upsample to c3 size (64x64), concat with c3
-        u3 = self.up3(u4, c2)          # upsample to c2 size (128x128), concat with c2
-        u2 = self.up2(u3, c1)          # upsample to c1 size (256x256), concat with c1
-        u1 = self.up1(u2)
+        u4 = self.up4(bottleneck, c4)  # 32×32, skip from enc4
+        u3 = self.up3(u4, c3)          # 64×64, skip from enc3
+        u2 = self.up2(u3, c2)          # 128×128, skip from enc2
+        u1 = self.up1(u2, c1)          # 256×256, skip from enc1
+        
         return self.head(u1)
     
     def predict(self, x: torch.Tensor) -> torch.Tensor:

@@ -1,8 +1,9 @@
+import platform
 import torch
 from torch.utils.data import Dataset, DataLoader
 import mlflow
 from src.utils.losses import choose_loss
-from src.utils.params import Params
+from src.utils.params import Params, integrate_global_parameters
 
 from torch.amp import autocast, GradScaler
 
@@ -11,8 +12,10 @@ class model_trainer:
     """ Class to handle model training and validation. """
     def __init__(self, model: torch.nn.Module):
         self.model = model
+        self.train_loader : DataLoader = None
+        self.validation_loader : DataLoader = None
 
-    def train_1_epoch(self, training_loader, optimizer, loss_fn, device='cpu', use_amp=False):
+    def train_1_epoch(self, optimizer, loss_fn, device='cpu', use_amp=False):
         """ Function to train the model for one epoch.
             Args:
                 model: The model to be trained.
@@ -30,11 +33,10 @@ class model_trainer:
         num_batches = 0
         scaler = GradScaler(device=device, enabled=use_amp)
         
-        for i, data in enumerate(training_loader):
+        for i, data in enumerate(self.train_loader):
             # Every data instance is an input + label pair
-            inputs, annotation = data
-            inputs = inputs.to(device)
-            annotation = annotation.to(device)
+            inputs = data['image'].to(device)
+            annotation = data['annotation'].to(device)
 
             # Zero your gradients for every batch!
             optimizer.zero_grad()
@@ -46,6 +48,11 @@ class model_trainer:
             
             # Backward pass with scaling
             scaler.scale(loss).backward()
+            
+            # Gradient clipping to prevent exploding gradients
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            
             scaler.step(optimizer)
             scaler.update()
             
@@ -54,29 +61,50 @@ class model_trainer:
         
         return running_loss / num_batches if num_batches > 0 else 0.0
 
-    def validate_1_epoch(self, validation_loader, loss_functions : dict[str, callable], device='cpu'):
+    def validate_1_epoch(self, loss_functions : dict[str, callable], device='cpu', num_classes: int = 151):
         """ Function to validate the model for one epoch.
             Args:
                 model: The model to be validated.
                 validation_loader: DataLoader for the validation data.
                 loss_functions: Dictionary of loss functions to use.
                 device: Device to validate on ('cpu' or 'cuda').
+                num_classes: Number of classes for mIoU computation.
             
             Returns:
-                Dictionary of average validation losses.
+                Dictionary of average validation losses and metrics.
         """
+        from src.utils.metrics import compute_miou, compute_pixel_accuracy
+        
         self.model.eval()
         loss_list = {key: 0.0 for key in loss_functions.keys()}
+        total_miou = 0.0
+        total_pixel_acc = 0.0
+        num_batches = 0
+        
         with torch.no_grad():
-            for i, data in enumerate(validation_loader):
-                inputs, annotation = data
-                inputs = inputs.to(device)
-                annotation = annotation.to(device)
+            for i, data in enumerate(self.validation_loader):
+                inputs = data['image'].to(device)
+                annotation = data['annotation'].to(device)
                 outputs = self.model(inputs)
+                
+                # Compute losses
                 for key, loss_fn in loss_functions.items():
                     loss = loss_fn(outputs, annotation)
                     loss_list[key] += loss.item()
-        return {key: loss_list[key] / len(validation_loader) for key in loss_list.keys()}
+                
+                # Compute metrics
+                miou, _ = compute_miou(outputs, annotation, num_classes)
+                pixel_acc = compute_pixel_accuracy(outputs, annotation)
+                total_miou += miou
+                total_pixel_acc += pixel_acc
+                num_batches += 1
+        
+        # Average losses and metrics
+        results = {key: loss_list[key] / num_batches for key in loss_list.keys()}
+        results['mIoU'] = total_miou / num_batches if num_batches > 0 else 0.0
+        results['pixel_accuracy'] = total_pixel_acc / num_batches if num_batches > 0 else 0.0
+        
+        return results
 
 
 
@@ -89,8 +117,9 @@ class model_trainer:
                 parameters: A Params object with training parameters. 
                 (it should contain 'learning_rate', 'num_epochs', 'batch_size', etc.)
         """
+        parameters = integrate_global_parameters(parameters)
         # Device setup
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        device = torch.device(parameters.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.model = self.model.to(device)
         print(f"Training on device: {device}")
         
@@ -100,45 +129,53 @@ class model_trainer:
             print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
         else:
             print("Using single GPU or CPU")
-            self.model = torch.compile(self.model)
+            # Optional: Compile model for faster execution (PyTorch 2.0+)
+            if device.type == 'cuda' and hasattr(torch, 'compile'):
+                try:
+                    self.model = torch.compile(self.model)
+                    print("Model compiled with torch.compile()")
+                except Exception as e:
+                    print(f"torch.compile failed: {e}")
         
-        # Optional: Compile model for faster execution (PyTorch 2.0+)
-        # try:
-        #     self.model = torch.compile(self.model, mode='reduce-overhead')
-        #     print("Model compiled with torch.compile()")
-        # except AttributeError:
-        #     print("torch.compile not available (requires PyTorch 2.0+)")
-        
-        # Enable CuDNN autotuner for optimal performance
+        #dataloader setup
         if device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
             use_amp = parameters.get('use_amp', True)  # Use mixed precision by default on CUDA
         else:
             use_amp = False
-
         batch_size = parameters.get('batch_size', 16)
         num_workers = parameters.get('num_workers', 8)
         prefetch_factor = parameters.get('prefetch_factor', 2)
         pin_memory = device.type == 'cuda'
+        
+        # Windows often has issues with multiprocessing; fallback to 0 workers
+        if platform.system() == 'Windows' and num_workers > 0:
+            print("Warning: On Windows, using num_workers=0 to avoid multiprocessing issues")
+            num_workers = 0
+            prefetch_factor = None  # Not allowed when num_workers=0
+            persistent_workers = False
+        else:
+            persistent_workers = True if num_workers > 0 else False
 
-        train_loader = DataLoader(
+        self.train_loader = DataLoader(
             train_dataset, 
             batch_size=batch_size, 
             shuffle=True, 
             pin_memory=pin_memory, 
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,       # Prepare batches ahead of time
-            persistent_workers=True)
+            persistent_workers=persistent_workers)
         
-        val_loader = DataLoader(
+        self.validation_loader = DataLoader(
             val_dataset, 
             batch_size=batch_size, 
             shuffle=False, 
             pin_memory=pin_memory, 
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,       # Prepare batches ahead of time
-            persistent_workers=True)
-
+            persistent_workers=persistent_workers)
+        
+        # Optimizer setup
         learning_rate = parameters.get('learning_rate', 0.001)
         num_epochs = parameters.get('num_epochs', 10)
         optimizer_name = parameters.get('optimizer', 'AdamW')
@@ -149,13 +186,15 @@ class model_trainer:
         else:
             momentum = parameters.get('optimizer_momentum', 0.9)
             optimizer = torch.optim.SGD(self.model.parameters(), lr=learning_rate, momentum=momentum)
-        
-        loss_fn = choose_loss(parameters.get('train_loss_function'))
-        loss_functions = {loss : choose_loss(loss) for loss in parameters.get('validation_loss_function')}
-        
+        # loss function setup
+        loss_fn = choose_loss(parameters.get('train_loss_function'), parameters.get('train_loss_params', {}))
+        loss_functions = {loss : choose_loss(loss, parameters.get('validation_loss_params', {})) for loss in parameters.get('validation_loss_functions', ['CrossEntropyLoss'])}
+        # to verify model accuracy during validation, we can use the first validation loss function
+        veryfying_loss_function = parameters.get('validation_loss_functions', ['CrossEntropyLoss'])[0]
+        # Learning rate scheduler setup
         scheduler = parameters.get('scheduler', None)
         if(scheduler == 'StepLR'):
-            step_size = parameters.get('scheduler_step_size', 7)
+            step_size = parameters.get('scheduler_step', 7)
             gamma = parameters.get('scheduler_gamma', 0.1)
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
         elif(scheduler == 'ReduceLROnPlateau'):
@@ -174,17 +213,20 @@ class model_trainer:
         best_model_path = parameters.get('best_model_path', 'best_model.pt')
         recent_model_path = parameters.get('recent_model_path', 'recent_model.pt')
         
+        # Get num_classes for mIoU computation
+        num_classes = parameters.get('num_classes', 151)  # ADE20K has 150 classes + background
+        
         with mlflow.start_run() as run:
             # Log training parameters
             mlflow.log_params(parameters.get_all())
             
             for epoch in range(num_epochs):
                 # Train for one epoch
-                train_loss = self.train_1_epoch(train_loader, optimizer, loss_fn, device=device, use_amp=use_amp)
+                train_loss = self.train_1_epoch(optimizer, loss_fn, device=device, use_amp=use_amp)
                 
-                # Validate for one epoch
-                val_losses = self.validate_1_epoch(val_loader, loss_functions, device=device)
-                val_loss = val_losses[list(val_losses.keys())[0]]  # Use first loss for early stopping
+                # Validate for one epoch (includes mIoU and pixel accuracy)
+                val_metrics = self.validate_1_epoch(loss_functions, device=device, num_classes=num_classes)
+                val_loss = val_metrics[veryfying_loss_function]  # Use first loss for early stopping
                 
                 # Update scheduler
                 if scheduler is not None:
@@ -195,9 +237,10 @@ class model_trainer:
                 
                 # Log metrics to MLflow
                 mlflow.log_metrics({"train_loss": train_loss}, step=epoch)
-                mlflow.log_metrics({f"val_{key}": val_losses[key] for key in val_losses.keys()}, step=epoch)
+                mlflow.log_metrics({f"val_{key}": val_metrics[key] for key in val_metrics.keys()}, step=epoch)
                 
-                print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Validation Losses: {val_losses}")
+                print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}")
+                print(f"  Validation: {val_metrics}")
                 
                 # Early stopping logic
                 if val_loss < best_val_loss - early_stopping_min_delta:
