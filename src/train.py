@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 import mlflow
 from src.utils.losses import choose_loss
 from src.utils.params import Params, integrate_global_parameters
+from src.utils.params import Params, integrate_global_parameters
 
 from torch.amp import autocast, GradScaler
 
@@ -17,6 +18,7 @@ class model_trainer:
         self.validation_loader : DataLoader = None
         self.accumulation_steps = accumulation_steps
 
+    def train_1_epoch(self, optimizer, loss_fn, device='cpu', use_amp=False):
     def train_1_epoch(self, optimizer, loss_fn, device='cpu', use_amp=False):
         """ Function to train the model for one epoch.
             Args:
@@ -35,6 +37,7 @@ class model_trainer:
         num_batches = 0
         scaler = GradScaler(device=device, enabled=use_amp)
         
+        for i, data in enumerate(self.train_loader):
         for i, data in enumerate(self.train_loader):
             # Every data instance is an input + label pair
             inputs = data['image'].to(device)
@@ -65,6 +68,7 @@ class model_trainer:
         return running_loss / num_batches if num_batches > 0 else 0.0
 
     def validate_1_epoch(self, loss_functions : dict[str, callable], device='cpu', num_classes: int = 151):
+    def validate_1_epoch(self, loss_functions : dict[str, callable], device='cpu', num_classes: int = 151):
         """ Function to validate the model for one epoch.
             Args:
                 model: The model to be validated.
@@ -72,10 +76,14 @@ class model_trainer:
                 loss_functions: Dictionary of loss functions to use.
                 device: Device to validate on ('cpu' or 'cuda').
                 num_classes: Number of classes for mIoU computation.
+                num_classes: Number of classes for mIoU computation.
             
             Returns:
                 Dictionary of average validation losses and metrics.
+                Dictionary of average validation losses and metrics.
         """
+        from src.utils.metrics import compute_miou, compute_pixel_accuracy
+        
         from src.utils.metrics import compute_miou, compute_pixel_accuracy
         
         self.model.eval()
@@ -84,11 +92,20 @@ class model_trainer:
         total_pixel_acc = 0.0
         num_batches = 0
         
+        total_miou = 0.0
+        total_pixel_acc = 0.0
+        num_batches = 0
+        
         with torch.no_grad():
             for i, data in enumerate(self.validation_loader):
                 inputs = data['image'].to(device)
                 annotation = data['annotation'].to(device)
+            for i, data in enumerate(self.validation_loader):
+                inputs = data['image'].to(device)
+                annotation = data['annotation'].to(device)
                 outputs = self.model(inputs)
+                
+                # Compute losses
                 
                 # Compute losses
                 for key, loss_fn in loss_functions.items():
@@ -125,6 +142,7 @@ class model_trainer:
         parameters = integrate_global_parameters(parameters)
         # Device setup
         device = torch.device(parameters.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
+        device = torch.device(parameters.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.model = self.model.to(device)
         print(f"Training on device: {device}")
         
@@ -141,7 +159,15 @@ class model_trainer:
                     print("Model compiled with torch.compile()")
                 except Exception as e:
                     print(f"torch.compile failed: {e}")
+            # Optional: Compile model for faster execution (PyTorch 2.0+)
+            if device.type == 'cuda' and hasattr(torch, 'compile'):
+                try:
+                    self.model = torch.compile(self.model)
+                    print("Model compiled with torch.compile()")
+                except Exception as e:
+                    print(f"torch.compile failed: {e}")
         
+        #dataloader setup
         #dataloader setup
         if device.type == 'cuda':
             torch.backends.cudnn.benchmark = True
@@ -170,7 +196,9 @@ class model_trainer:
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,       # Prepare batches ahead of time
             persistent_workers=persistent_workers)
+            persistent_workers=persistent_workers)
         
+        self.validation_loader = DataLoader(
         self.validation_loader = DataLoader(
             val_dataset, 
             batch_size=batch_size, 
@@ -178,6 +206,9 @@ class model_trainer:
             pin_memory=pin_memory, 
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,       # Prepare batches ahead of time
+            persistent_workers=persistent_workers)
+        
+        # Optimizer setup
             persistent_workers=persistent_workers)
         
         # Optimizer setup
@@ -198,8 +229,15 @@ class model_trainer:
         # to verify model accuracy during validation, we can use the first validation loss function
         veryfying_loss_function = parameters.get('validation_loss_functions', ['CrossEntropyLoss'])[0]
         # Learning rate scheduler setup
+        # loss function setup
+        loss_fn = choose_loss(parameters.get('train_loss_function'), parameters.get('train_loss_params', {}))
+        loss_functions = {loss : choose_loss(loss, parameters.get('validation_loss_params', {})) for loss in parameters.get('validation_loss_functions', ['CrossEntropyLoss'])}
+        # to verify model accuracy during validation, we can use the first validation loss function
+        veryfying_loss_function = parameters.get('validation_loss_functions', ['CrossEntropyLoss'])[0]
+        # Learning rate scheduler setup
         scheduler = parameters.get('scheduler', None)
         if(scheduler == 'StepLR'):
+            step_size = parameters.get('scheduler_step', 7)
             step_size = parameters.get('scheduler_step', 7)
             gamma = parameters.get('scheduler_gamma', 0.1)
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
@@ -242,6 +280,9 @@ class model_trainer:
         # Get num_classes for mIoU computation
         num_classes = parameters.get('num_classes', 151)  # ADE20K has 150 classes + background
         
+        # Get num_classes for mIoU computation
+        num_classes = parameters.get('num_classes', 151)  # ADE20K has 150 classes + background
+        
         with mlflow.start_run() as run:
             # Log training parameters
             mlflow.log_params(parameters.get_all())
@@ -249,7 +290,11 @@ class model_trainer:
             for epoch in range(num_epochs):
                 # Train for one epoch
                 train_loss = self.train_1_epoch(optimizer, loss_fn, device=device, use_amp=use_amp)
+                train_loss = self.train_1_epoch(optimizer, loss_fn, device=device, use_amp=use_amp)
                 
+                # Validate for one epoch (includes mIoU and pixel accuracy)
+                val_metrics = self.validate_1_epoch(loss_functions, device=device, num_classes=num_classes)
+                val_loss = val_metrics[veryfying_loss_function]  # Use first loss for early stopping
                 # Validate for one epoch (includes mIoU and pixel accuracy)
                 val_metrics = self.validate_1_epoch(loss_functions, device=device, num_classes=num_classes)
                 val_loss = val_metrics[veryfying_loss_function]  # Use first loss for early stopping
@@ -263,6 +308,7 @@ class model_trainer:
                 
                 # Log metrics to MLflow
                 mlflow.log_metrics({"train_loss": train_loss}, step=epoch)
+                mlflow.log_metrics({f"val_{key}": val_metrics[key] for key in val_metrics.keys()}, step=epoch)
                 mlflow.log_metrics({f"val_{key}": val_metrics[key] for key in val_metrics.keys()}, step=epoch)
                 
                 # Optuna pruning: report intermediate value and check if trial should be pruned

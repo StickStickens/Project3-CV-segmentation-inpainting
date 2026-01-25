@@ -107,6 +107,7 @@ def make_val_transform(mean, std):
     return _transform
 
 def get_random_subset(dataset : Dataset, sample_size: int):
+def get_random_subset(dataset : Dataset, sample_size: int):
     """Get a random subset of the dataset of given sample size."""
     total_size = len(dataset)
     if sample_size > total_size:

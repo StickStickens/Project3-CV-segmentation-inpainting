@@ -47,6 +47,7 @@ class FocalLoss(nn.Module):
     """Focal Loss for handling class imbalance in segmentation."""
     
     def __init__(self, alpha=0.25, gamma=2.0, reduction='mean', **kwargs):
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean', **kwargs):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -73,6 +74,7 @@ class FocalLoss(nn.Module):
 class IoULoss(nn.Module):
     """IoU (Jaccard) Loss for segmentation tasks."""
     
+    def __init__(self, smooth=1.0, **kwargs):
     def __init__(self, smooth=1.0, **kwargs):
         super(IoULoss, self).__init__()
         self.smooth = smooth
@@ -107,6 +109,7 @@ class IoULoss(nn.Module):
 class TverskyLoss(nn.Module):
     """Tversky Loss - generalization of Dice Loss with adjustable FP/FN trade-off."""
     
+    def __init__(self, alpha=0.5, beta=0.5, smooth=1.0, **kwargs):
     def __init__(self, alpha=0.5, beta=0.5, smooth=1.0, **kwargs):
         super(TverskyLoss, self).__init__()
         self.alpha = alpha  # weight for false positives
@@ -187,6 +190,7 @@ def choose_loss(loss_name: str, params: dict = None) -> torch.nn.Module:
         Args:
             loss_name: Name of the loss function as a string.
             params: Dictionary of parameters to pass to the loss function.
+            params: Dictionary of parameters to pass to the loss function.
 
         Returns:
             A PyTorch loss function.s
@@ -194,21 +198,32 @@ def choose_loss(loss_name: str, params: dict = None) -> torch.nn.Module:
     if params is None:
         params = {}
     
+    if params is None:
+        params = {}
+    
     if loss_name == 'CrossEntropyLoss':
         return CrossEntropyLoss(**params)
     elif loss_name == 'DiceLoss':
         return DiceLoss(**params)
+        return DiceLoss(**params)
     elif loss_name == 'FocalLoss':
         return FocalLoss(**params)
+        return FocalLoss(**params)
     elif loss_name == 'IoULoss':
+        return IoULoss(**params)
         return IoULoss(**params)
     elif loss_name == 'TverskyLoss':
         return TverskyLoss(**params)
     elif loss_name == 'CombinedLoss':
         return CombinedCELDiceLoss(**params)
+        return TverskyLoss(**params)
+    elif loss_name == 'CombinedLoss':
+        return CombinedCELDiceLoss(**params)
     elif loss_name == 'MSELoss':
         return torch.nn.MSELoss(**params)
+        return torch.nn.MSELoss(**params)
     elif loss_name == 'L1Loss':
+        return torch.nn.L1Loss(**params)
         return torch.nn.L1Loss(**params)
     else:
         raise ValueError(f"Unsupported loss function: {loss_name}")
