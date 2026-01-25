@@ -4,13 +4,14 @@
     "validation_image_folder": "./data/archive/ADEChallengeData2016/images/validation/",
     "validation_annotation_folder": "./data/archive/ADEChallengeData2016/annotations/validation/",
     "mean": [
-        2.0671334368671523e-06,
-        1.967431671801023e-06,
-        1.8147900391340954e-06
+        0.4889930784702301,
+        0.46540799736976624,
+        0.4292996823787689
     ],
     "std": [
-        9.662993534220732e-07,
-        9.704332342153066e-07,
-        1.0166675110667711e-06
-    ]
+        0.22858403623104095,
+        0.2295619249343872,
+        0.24049891531467438
+    ],
+    "num_workers": 4
 }

@@ -1,0 +1,30 @@
+{
+    "batch_size": 16,
+    "learning_rate": 0.001,
+    "num_epochs": 100,
+    "optimizer": "AdamW",
+    "optimizer_momentum": 0.9,
+    "optimizer_momentum2": 0.999,
+    "scheduler": "StepLR",
+    "scheduler_step": 7,
+    "scheduler_gamma": 0.96,
+    "early_stopping_patience": 15,
+    "early_stopping_min_delta": 0.0,
+    "best_model_path": "./models/best_unet.pt",
+    "recent_model_path": "./models/recent_unet.pt",
+    "train_loss_function": "CombinedLoss",
+    "validation_loss_functions": ["CombinedLoss", "DiceLoss"],
+    "train_loss_params": {
+        "ce_weight": 1.82,
+        "dice_weight": 0.23,
+        "label_smoothing": 0.06
+    },
+    "validation_loss_params": {
+        "ce_weight": 1.82,
+        "dice_weight": 0.23,
+        "label_smoothing": 0.06
+    },
+    "num_classes": 151,
+    "lr": 2e-04,
+    "weight_decay": 0.00018
+}
