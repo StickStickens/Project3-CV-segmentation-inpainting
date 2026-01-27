@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+
+from src.utils.params import Params
 from .model_abstract import ModelAbstract
 
 
@@ -63,7 +65,10 @@ class UNet(ModelAbstract):
             head: 256×256, num_classes
     """
 
-    def __init__(self, in_channels: int = 3, num_classes: int = 1, base_channels: int = 64, **args):
+    def __init__(self, params : Params):
+        in_channels = params.get("in_channels", 3)
+        num_classes = params.get("num_classes", 151)
+        base_channels = params.get("base_channels", 64)
         super().__init__()
         # Encoder
         self.enc1 = _conv_block(in_channels, base_channels)           # 256×256

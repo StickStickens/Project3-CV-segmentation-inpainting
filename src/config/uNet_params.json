@@ -1,17 +1,17 @@
 {
-    "batch_size": 16,
-    "learning_rate": 0.001,
-    "num_epochs": 100,
+    "batch_size": 32,
+    "learning_rate": 7e-4,
+    "num_epochs": 70,
     "optimizer": "AdamW",
     "optimizer_momentum": 0.9,
     "optimizer_momentum2": 0.999,
     "scheduler": "StepLR",
     "scheduler_step": 7,
-    "scheduler_gamma": 0.96,
-    "early_stopping_patience": 15,
-    "early_stopping_min_delta": 0.0,
-    "best_model_path": "./models/best_unet.pt",
-    "recent_model_path": "./models/recent_unet.pt",
+    "scheduler_gamma": 0.98,
+    "early_stopping_patience": 12,
+    "early_stopping_min_delta": 0.001,
+    "best_model_path": "./models/best_unet_2.pt",
+    "recent_model_path": "./models/recent_unet_2.pt",
     "train_loss_function": "CrossEntropyLoss",
     "validation_loss_functions": ["CrossEntropyLoss", "DiceLoss", "FocalLoss"],
     "train_loss_params": {
@@ -21,10 +21,10 @@
         "label_smoothing": 0.004
     },
     "num_classes": 151,
-    "lr": 7e-04,
     "weight_decay": 0.001,
     "mlflow_tracking_uri": "file:./mlruns",
+    "mlflow_experiment": "Model_training",
     "in_channels": 3,
-    "base_channels": 64
+    "base_channels": 96
 
 }
