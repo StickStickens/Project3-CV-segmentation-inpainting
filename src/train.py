@@ -6,6 +6,7 @@ import mlflow
 from src.models.model_abstract import ModelAbstract
 from src.utils.losses import choose_loss
 from src.utils.params import Params, integrate_global_parameters
+from src.dataset.dataset import get_random_subset, ADE20KDataset
 from torch.amp import autocast, GradScaler
 import argparse
 from pathlib import Path
@@ -36,7 +37,10 @@ class model_trainer:
         running_loss = 0.0
         num_batches = 0
         scaler = GradScaler(device=device, enabled=use_amp)
-        
+        grad_norms = []
+        weight_norms = []
+        lrs = []
+
         for i, data in enumerate(self.train_loader):
             # Every data instance is an input + label pair
             inputs = data['image'].to(device)
@@ -48,23 +52,42 @@ class model_trainer:
                 loss = loss_fn(outputs, annotation)
                 # Scale loss by accumulation steps to keep gradient magnitude consistent
                 loss = loss / self.accumulation_steps
-            
+
             running_loss += loss.item()
             # Backward pass with scaling
             scaler.scale(loss).backward()
             num_batches += 1
-            
+
             # Optimizer step only every accumulation_steps batches
             if (i + 1) % self.accumulation_steps == 0:
                 # Gradient clipping to prevent exploding gradients
                 scaler.unscale_(optimizer)
+                # Compute gradient norm (global)
+                total_norm = 0.0
+                for p in self.model.parameters():
+                    if p.grad is not None:
+                        param_norm = p.grad.data.norm(2)
+                        total_norm += param_norm.item() ** 2
+                grad_norms.append(total_norm ** 0.5)
+                # Compute weight norm (global)
+                total_weight_norm = 0.0
+                for p in self.model.parameters():
+                    param_norm = p.data.norm(2)
+                    total_weight_norm += param_norm.item() ** 2
+                weight_norms.append(total_weight_norm ** 0.5)
+                # Learning rate (assume one group)
+                lrs.append(optimizer.param_groups[0]['lr'])
+
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
-        
-        return running_loss / num_batches if num_batches > 0 else 0.0
+
+        # Return average loss, grad norm, weight norm, lr (averaged over steps)
+        avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0
+        avg_weight_norm = sum(weight_norms) / len(weight_norms) if weight_norms else 0.0
+        avg_lr = sum(lrs) / len(lrs) if lrs else 0.0
+        return (running_loss / num_batches if num_batches > 0 else 0.0, avg_grad_norm, avg_weight_norm, avg_lr)
 
     def validate_1_epoch(self, loss_functions : dict[str, callable], device='cpu', num_classes: int = 151):
         """ Function to validate the model for one epoch.
@@ -251,7 +274,7 @@ class model_trainer:
         # Configure MLflow tracking and experiment
         tracking_uri = parameters.get('mlflow_tracking_uri', 'file:./mlruns')
         mlflow.set_tracking_uri(tracking_uri)
-        experiment_name = parameters.get('mlflow_experiment', None)
+        experiment_name = parameters.get('mlflow_experiment', 'default_experiment')
         if experiment_name:
             mlflow.set_experiment(experiment_name)
 
@@ -261,33 +284,38 @@ class model_trainer:
             
             for epoch in range(num_epochs):
                 # Train for one epoch
-                train_loss = self.train_1_epoch(optimizer, loss_fn, device=device, use_amp=use_amp)
-                
+                train_loss, grad_norm, weight_norm, lr = self.train_1_epoch(optimizer, loss_fn, device=device, use_amp=use_amp)
+
                 # Validate for one epoch (includes mIoU and pixel accuracy)
                 val_metrics = self.validate_1_epoch(loss_functions, device=device, num_classes=num_classes)
                 val_loss = val_metrics[veryfying_loss_function]  # Use first loss for early stopping
-                
+
                 # Update scheduler
                 if scheduler is not None:
                     if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                         scheduler.step(val_loss)
                     else:
                         scheduler.step()
-                
+
                 # Log metrics to MLflow
-                mlflow.log_metrics({"train_loss": train_loss}, step=epoch)
+                mlflow.log_metrics({
+                    "train_loss": train_loss,
+                    "grad_norm": grad_norm,
+                    "weight_norm": weight_norm,
+                    "learning_rate": lr
+                }, step=epoch)
                 mlflow.log_metrics({f"val_{key}": val_metrics[key] for key in val_metrics.keys()}, step=epoch)
-                
+
                 # Optuna pruning: report intermediate value and check if trial should be pruned
                 if optuna_trial is not None:
                     optuna_trial.report(val_loss, epoch)
                     if optuna_trial.should_prune():
                         print(f"Trial pruned at epoch {epoch+1} (val_loss: {val_loss:.4f})")
                         raise optuna.TrialPruned()
-                
-                print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}")
+
+                print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Grad Norm: {grad_norm:.4f}, Weight Norm: {weight_norm:.4f}, LR: {lr:.6f}")
                 print(f"  Validation: {val_metrics}")
-                
+
                 # Early stopping logic
                 if val_loss < best_val_loss - early_stopping_min_delta:
                     best_val_loss = val_loss
@@ -328,11 +356,12 @@ def train_model_from_cls():
     parser.add_argument('--model_class', type=str, default='UNet', help='Model class name to instantiate.')
     parser.add_argument('--parameters_file', type=str, required=True, help='Path to the parameters JSON file.')
     parser.add_argument('--save_model', action='store_true', help='Whether to save the trained model.')
-    parser.add_argument('dataset_name', type=str, help='Name of the dataset class to use for training.')
+    parser.add_argument('--dataset_name', type=str, help='Name of the dataset class to use for training.')
+    parser.add_argument('--sample_number', type=int, default = -1, help='Sample number to use for training.')
     args = parser.parse_args()
 
     # Load parameters
-    params = Params.from_json(args.parameters_file)
+    params = Params(args.parameters_file)
     params = integrate_global_parameters(params)
 
     # Instantiate model
@@ -347,14 +376,24 @@ def train_model_from_cls():
     # Instantiate datasets
     if args.dataset_name == 'ADE20KDataset':
         from src.dataset.dataset import ADE20KDataset, make_train_transform, make_val_transform
-        train_dataset = ADE20KDataset(split='train', transform=make_train_transform(
+        train_dataset = ADE20KDataset(
+            image_folder=params.get("train_image_folder"),
+            annotation_folder=params.get("train_annotation_folder"),
+            transform=make_train_transform(
             mean=params.get("mean", [0.485, 0.456, 0.406]),
             std=params.get("std", [0.229, 0.224, 0.225])
         ))
-        val_dataset = ADE20KDataset(split='val', transform=make_val_transform(
+        val_dataset = ADE20KDataset(
+            image_folder=params.get("validation_image_folder"),
+            annotation_folder=params.get("validation_annotation_folder"),
+            transform=make_val_transform(
             mean=params.get("mean", [0.485, 0.456, 0.406]),
             std=params.get("std", [0.229, 0.224, 0.225])
         ))
+        if args.sample_number > 0:
+            train_dataset = get_random_subset(train_dataset, args.sample_number)
+            val_dataset = get_random_subset(val_dataset, args.sample_number)
+
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset_name}")
     
