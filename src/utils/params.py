@@ -43,6 +43,13 @@ class Params:
 
     def get_all(self):
         return self.params
+    
+    @staticmethod
+    def overwrite_params(overwritten: 'Params', overwrite: 'Params') -> None:
+        """Overwrite keys in 'overwritten' with values from 'overwrite'.
+        Updates in place; does not return a new Params.
+        """
+        overwritten.params.update(overwrite.get_all())
 
 def merge_params(params1: Params, params2: Params) -> Params:
     merged_params = Params.__new__(Params)

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from .model_abstract import ModelAbstract
 
 
 def _conv_block(in_channels: int, out_channels: int) -> nn.Sequential:
@@ -43,7 +44,7 @@ class _UpBlock(nn.Module):
         return self.conv(x)
 
 
-class UNet(nn.Module):
+class UNet(ModelAbstract):
     """A lightweight UNet for 256x256 inputs/outputs.
     
     Architecture (for 256x256 input):
@@ -62,7 +63,7 @@ class UNet(nn.Module):
             head: 256×256, num_classes
     """
 
-    def __init__(self, in_channels: int = 3, num_classes: int = 1, base_channels: int = 64):
+    def __init__(self, in_channels: int = 3, num_classes: int = 1, base_channels: int = 64, **args):
         super().__init__()
         # Encoder
         self.enc1 = _conv_block(in_channels, base_channels)           # 256×256
@@ -78,7 +79,7 @@ class UNet(nn.Module):
         self.up1 = _UpBlock(base_channels * 2, base_channels)       # 256×256, skip from enc1
 
         self.head = nn.Conv2d(base_channels, num_classes, kernel_size=1, bias=True)
-        
+        self.image_sizes = (256, 256)
         # Initialize weights
         self._init_weights()
     
@@ -128,3 +129,17 @@ class UNet(nn.Module):
         probs = torch.softmax(logits, dim=1)  # Apply softmax
         predictions = torch.argmax(probs, dim=1)  # Get class indices
         return predictions
+    
+    def fit_to_size( self, image : torch.Tensor) -> torch.Tensor:
+        """Resize input image tensor to target height and width using bilinear interpolation.
+        
+        Args:
+            image: Input image tensor of shape (C, H, W)
+            target_height: Desired height
+            target_width: Desired width
+        """
+        target_height, target_width = self.image_sizes
+        if(len(image.shape) == 3):
+            image = image.unsqueeze(0)
+        return nn.functional.interpolate(image, size=(target_height, target_width), mode='bilinear', align_corners=False)
+

@@ -38,8 +38,6 @@ def estimate_hyperparameters(model, model_params_path, dataset, n_trials=20, sam
     def objective(trial):
         lr = trial.suggest_float('lr', 1e-5, 1e-2, log=True)
         weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-2, log=True)
-        ce_weight = trial.suggest_float('ce_weight', 0.5, 2.0)
-        dice_weight = trial.suggest_float('dice_weight', 0.0, 1.0)
         label_smoothing = trial.suggest_float('label_smoothing', 0.0, 0.1)
 
         trial_params = dict(base_params)
@@ -49,6 +47,7 @@ def estimate_hyperparameters(model, model_params_path, dataset, n_trials=20, sam
             'learning_rate': lr,
             'weight_decay': weight_decay,
             'train_loss_params': {
+
                 'label_smoothing': label_smoothing,
             },
             'validation_loss_params': {
@@ -63,7 +62,7 @@ def estimate_hyperparameters(model, model_params_path, dataset, n_trials=20, sam
 
         params_obj = _params_from_dict(trial_params)
         trainer = model_trainer(trial_model)
-        trainer.train_model(train_subset, val_subset, params_obj, optuna_trial=trial)
+        trainer.train_model(train_subset, val_subset, params_obj, optuna_trial=trial, save_model=False)
 
         loss_fn = {'CrossEntropyLoss': choose_loss('CrossEntropyLoss', {
             'label_smoothing': label_smoothing,

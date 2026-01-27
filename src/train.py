@@ -3,22 +3,22 @@ import optuna
 import torch
 from torch.utils.data import Dataset, DataLoader
 import mlflow
+from src.models.model_abstract import ModelAbstract
 from src.utils.losses import choose_loss
 from src.utils.params import Params, integrate_global_parameters
-from src.utils.params import Params, integrate_global_parameters
-
 from torch.amp import autocast, GradScaler
-
+import argparse
+from pathlib import Path
+import importlib
     
 class model_trainer:
     """ Class to handle model training and validation. """
-    def __init__(self, model: torch.nn.Module, accumulation_steps: int = 1):
+    def __init__(self, model: ModelAbstract, accumulation_steps: int = 1):
         self.model = model
         self.train_loader : DataLoader = None
         self.validation_loader : DataLoader = None
         self.accumulation_steps = accumulation_steps
 
-    def train_1_epoch(self, optimizer, loss_fn, device='cpu', use_amp=False):
     def train_1_epoch(self, optimizer, loss_fn, device='cpu', use_amp=False):
         """ Function to train the model for one epoch.
             Args:
@@ -37,7 +37,6 @@ class model_trainer:
         num_batches = 0
         scaler = GradScaler(device=device, enabled=use_amp)
         
-        for i, data in enumerate(self.train_loader):
         for i, data in enumerate(self.train_loader):
             # Every data instance is an input + label pair
             inputs = data['image'].to(device)
@@ -68,7 +67,6 @@ class model_trainer:
         return running_loss / num_batches if num_batches > 0 else 0.0
 
     def validate_1_epoch(self, loss_functions : dict[str, callable], device='cpu', num_classes: int = 151):
-    def validate_1_epoch(self, loss_functions : dict[str, callable], device='cpu', num_classes: int = 151):
         """ Function to validate the model for one epoch.
             Args:
                 model: The model to be validated.
@@ -76,22 +74,14 @@ class model_trainer:
                 loss_functions: Dictionary of loss functions to use.
                 device: Device to validate on ('cpu' or 'cuda').
                 num_classes: Number of classes for mIoU computation.
-                num_classes: Number of classes for mIoU computation.
             
             Returns:
                 Dictionary of average validation losses and metrics.
-                Dictionary of average validation losses and metrics.
         """
         from src.utils.metrics import compute_miou, compute_pixel_accuracy
-        
-        from src.utils.metrics import compute_miou, compute_pixel_accuracy
-        
+
         self.model.eval()
         loss_list = {key: 0.0 for key in loss_functions.keys()}
-        total_miou = 0.0
-        total_pixel_acc = 0.0
-        num_batches = 0
-        
         total_miou = 0.0
         total_pixel_acc = 0.0
         num_batches = 0
@@ -100,13 +90,8 @@ class model_trainer:
             for i, data in enumerate(self.validation_loader):
                 inputs = data['image'].to(device)
                 annotation = data['annotation'].to(device)
-            for i, data in enumerate(self.validation_loader):
-                inputs = data['image'].to(device)
-                annotation = data['annotation'].to(device)
                 outputs = self.model(inputs)
-                
-                # Compute losses
-                
+
                 # Compute losses
                 for key, loss_fn in loss_functions.items():
                     loss = loss_fn(outputs, annotation)
@@ -128,7 +113,8 @@ class model_trainer:
 
 
 
-    def train_model(self, train_dataset : Dataset, val_dataset: Dataset, parameters : Params, optuna_trial=None):
+    def train_model(self, train_dataset : Dataset, val_dataset: Dataset, parameters : Params, 
+                    optuna_trial=None, save_model=True):
         """ Function to train the model with given parameters. 
             Args:
                 model: The model to be trained.
@@ -142,7 +128,6 @@ class model_trainer:
         parameters = integrate_global_parameters(parameters)
         # Device setup
         device = torch.device(parameters.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
-        device = torch.device(parameters.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.model = self.model.to(device)
         print(f"Training on device: {device}")
         
@@ -152,20 +137,16 @@ class model_trainer:
             print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
         else:
             print("Using single GPU or CPU")
-            # Optional: Compile model for faster execution (PyTorch 2.0+)
-            if device.type == 'cuda' and hasattr(torch, 'compile'):
-                try:
-                    self.model = torch.compile(self.model)
-                    print("Model compiled with torch.compile()")
-                except Exception as e:
-                    print(f"torch.compile failed: {e}")
-            # Optional: Compile model for faster execution (PyTorch 2.0+)
-            if device.type == 'cuda' and hasattr(torch, 'compile'):
-                try:
-                    self.model = torch.compile(self.model)
-                    print("Model compiled with torch.compile()")
-                except Exception as e:
-                    print(f"torch.compile failed: {e}")
+        
+        # Optional: Compile model for faster execution (PyTorch 2.0+)
+        # Note: torch.compile() must be called BEFORE accessing .parameters()
+        use_compile = parameters.get('use_compile', False)
+        if use_compile and device.type == 'cuda' and hasattr(torch, 'compile'):
+            try:
+                self.model = torch.compile(self.model, mode='reduce-overhead')
+                print("Model compiled with torch.compile()")
+            except Exception as e:
+                print(f"torch.compile failed: {e}, continuing without compilation")
         
         #dataloader setup
         #dataloader setup
@@ -183,10 +164,9 @@ class model_trainer:
         if platform.system() == 'Windows' and num_workers > 0:
             print("Warning: On Windows, using num_workers=0 to avoid multiprocessing issues")
             num_workers = 0
-            prefetch_factor = None  # Not allowed when num_workers=0
-            persistent_workers = False
-        else:
-            persistent_workers = True if num_workers > 0 else False
+        # prefetch_factor is only valid when num_workers > 0
+        effective_prefetch = prefetch_factor if num_workers > 0 else None
+        persistent_workers = num_workers > 0
 
         self.train_loader = DataLoader(
             train_dataset, 
@@ -194,21 +174,16 @@ class model_trainer:
             shuffle=True, 
             pin_memory=pin_memory, 
             num_workers=num_workers,
-            prefetch_factor=prefetch_factor,       # Prepare batches ahead of time
-            persistent_workers=persistent_workers)
+            prefetch_factor=effective_prefetch,       # Prepare batches ahead of time
             persistent_workers=persistent_workers)
         
-        self.validation_loader = DataLoader(
         self.validation_loader = DataLoader(
             val_dataset, 
             batch_size=batch_size, 
             shuffle=False, 
             pin_memory=pin_memory, 
             num_workers=num_workers,
-            prefetch_factor=prefetch_factor,       # Prepare batches ahead of time
-            persistent_workers=persistent_workers)
-        
-        # Optimizer setup
+            prefetch_factor=effective_prefetch,       # Prepare batches ahead of time
             persistent_workers=persistent_workers)
         
         # Optimizer setup
@@ -229,15 +204,8 @@ class model_trainer:
         # to verify model accuracy during validation, we can use the first validation loss function
         veryfying_loss_function = parameters.get('validation_loss_functions', ['CrossEntropyLoss'])[0]
         # Learning rate scheduler setup
-        # loss function setup
-        loss_fn = choose_loss(parameters.get('train_loss_function'), parameters.get('train_loss_params', {}))
-        loss_functions = {loss : choose_loss(loss, parameters.get('validation_loss_params', {})) for loss in parameters.get('validation_loss_functions', ['CrossEntropyLoss'])}
-        # to verify model accuracy during validation, we can use the first validation loss function
-        veryfying_loss_function = parameters.get('validation_loss_functions', ['CrossEntropyLoss'])[0]
-        # Learning rate scheduler setup
         scheduler = parameters.get('scheduler', None)
         if(scheduler == 'StepLR'):
-            step_size = parameters.get('scheduler_step', 7)
             step_size = parameters.get('scheduler_step', 7)
             gamma = parameters.get('scheduler_gamma', 0.1)
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
@@ -280,9 +248,13 @@ class model_trainer:
         # Get num_classes for mIoU computation
         num_classes = parameters.get('num_classes', 151)  # ADE20K has 150 classes + background
         
-        # Get num_classes for mIoU computation
-        num_classes = parameters.get('num_classes', 151)  # ADE20K has 150 classes + background
-        
+        # Configure MLflow tracking and experiment
+        tracking_uri = parameters.get('mlflow_tracking_uri', 'file:./mlruns')
+        mlflow.set_tracking_uri(tracking_uri)
+        experiment_name = parameters.get('mlflow_experiment', None)
+        if experiment_name:
+            mlflow.set_experiment(experiment_name)
+
         with mlflow.start_run() as run:
             # Log training parameters
             mlflow.log_params(parameters.get_all())
@@ -290,11 +262,7 @@ class model_trainer:
             for epoch in range(num_epochs):
                 # Train for one epoch
                 train_loss = self.train_1_epoch(optimizer, loss_fn, device=device, use_amp=use_amp)
-                train_loss = self.train_1_epoch(optimizer, loss_fn, device=device, use_amp=use_amp)
                 
-                # Validate for one epoch (includes mIoU and pixel accuracy)
-                val_metrics = self.validate_1_epoch(loss_functions, device=device, num_classes=num_classes)
-                val_loss = val_metrics[veryfying_loss_function]  # Use first loss for early stopping
                 # Validate for one epoch (includes mIoU and pixel accuracy)
                 val_metrics = self.validate_1_epoch(loss_functions, device=device, num_classes=num_classes)
                 val_loss = val_metrics[veryfying_loss_function]  # Use first loss for early stopping
@@ -308,7 +276,6 @@ class model_trainer:
                 
                 # Log metrics to MLflow
                 mlflow.log_metrics({"train_loss": train_loss}, step=epoch)
-                mlflow.log_metrics({f"val_{key}": val_metrics[key] for key in val_metrics.keys()}, step=epoch)
                 mlflow.log_metrics({f"val_{key}": val_metrics[key] for key in val_metrics.keys()}, step=epoch)
                 
                 # Optuna pruning: report intermediate value and check if trial should be pruned
@@ -326,8 +293,9 @@ class model_trainer:
                     best_val_loss = val_loss
                     patience_counter = 0
                     # Save best model
-                    torch.save(self.model.state_dict(), best_model_path)
-                    print(f"  -> Best model saved with val_loss: {best_val_loss:.4f}")
+                    if save_model:
+                        torch.save(self.model.state_dict(), best_model_path)
+                        print(f"  -> Best model saved with val_loss: {best_val_loss:.4f}")
                 else:
                     patience_counter += 1
                     if patience_counter >= early_stopping_patience:
@@ -338,8 +306,14 @@ class model_trainer:
                         break
 
                 # Save the most recent model
-                torch.save(self.model.state_dict(), recent_model_path)
-                print(f"Most recent model saved to {recent_model_path}")
+                if save_model:
+                    torch.save(self.model.state_dict(), recent_model_path)
+                    print(f"Most recent model saved to {recent_model_path}")
+        if save_model:
+            # Log final model as an MLflow artifact
+            mlflow.pytorch.log_model(self.model, artifact_path="final_model")
+
+        mlflow.end_run()
         print("Training complete.")
     
     def get_model(self):
@@ -348,3 +322,45 @@ class model_trainer:
                 The trained model.
         """
         return self.model
+    
+def train_model_from_cls():
+    parser = argparse.ArgumentParser(description="Train a segmentation model.")
+    parser.add_argument('--model_class', type=str, default='UNet', help='Model class name to instantiate.')
+    parser.add_argument('--parameters_file', type=str, required=True, help='Path to the parameters JSON file.')
+    parser.add_argument('--save_model', action='store_true', help='Whether to save the trained model.')
+    parser.add_argument('dataset_name', type=str, help='Name of the dataset class to use for training.')
+    args = parser.parse_args()
+
+    # Load parameters
+    params = Params.from_json(args.parameters_file)
+    params = integrate_global_parameters(params)
+
+    # Instantiate model
+    if(args.model_class is None):
+        raise ValueError("Model class name must be provided via --model_class argument.")
+    if(args.model_class != "UNet"):
+        raise ValueError("For now only UNet model is supported.")
+    
+    model_class = getattr(importlib.import_module("src.models"), args.model_class)
+    model = model_class(params)
+
+    # Instantiate datasets
+    if args.dataset_name == 'ADE20KDataset':
+        from src.dataset.dataset import ADE20KDataset, make_train_transform, make_val_transform
+        train_dataset = ADE20KDataset(split='train', transform=make_train_transform(
+            mean=params.get("mean", [0.485, 0.456, 0.406]),
+            std=params.get("std", [0.229, 0.224, 0.225])
+        ))
+        val_dataset = ADE20KDataset(split='val', transform=make_val_transform(
+            mean=params.get("mean", [0.485, 0.456, 0.406]),
+            std=params.get("std", [0.229, 0.224, 0.225])
+        ))
+    else:
+        raise ValueError(f"Unsupported dataset: {args.dataset_name}")
+    
+    # Train model
+    trainer = model_trainer(model, accumulation_steps=params.get('accumulation_steps', 1))
+    trainer.train_model(train_dataset, val_dataset, params, save_model=args.save_model)
+
+if __name__ == "__main__":
+    train_model_from_cls()

@@ -12,19 +12,19 @@
     "early_stopping_min_delta": 0.0,
     "best_model_path": "./models/best_unet.pt",
     "recent_model_path": "./models/recent_unet.pt",
-    "train_loss_function": "CombinedLoss",
-    "validation_loss_functions": ["CombinedLoss", "DiceLoss"],
+    "train_loss_function": "CrossEntropyLoss",
+    "validation_loss_functions": ["CrossEntropyLoss", "DiceLoss", "FocalLoss"],
     "train_loss_params": {
-        "ce_weight": 1.82,
-        "dice_weight": 0.23,
-        "label_smoothing": 0.06
+        "label_smoothing": 0.004
     },
     "validation_loss_params": {
-        "ce_weight": 1.82,
-        "dice_weight": 0.23,
-        "label_smoothing": 0.06
+        "label_smoothing": 0.004
     },
     "num_classes": 151,
-    "lr": 2e-04,
-    "weight_decay": 0.00018
+    "lr": 7e-04,
+    "weight_decay": 0.001,
+    "mlflow_tracking_uri": "file:./mlruns",
+    "in_channels": 3,
+    "base_channels": 64
+
 }

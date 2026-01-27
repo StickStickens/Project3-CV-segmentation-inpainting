@@ -8,6 +8,7 @@ from torch.utils.data.distributed import DistributedSampler
 import mlflow
 from src.utils.losses import choose_loss
 from src.utils.params import Params, integrate_global_parameters
+from src.dataset.dataset import make_train_transform, make_val_transform
 
 from torch.amp import autocast, GradScaler
 
@@ -32,6 +33,15 @@ def is_main_process():
     return not dist.is_initialized() or dist.get_rank() == 0
 
 
+def _build_transform(kind: str, mean, std):
+    """Rebuild picklable transforms inside each worker based on kind."""
+    if kind == 'train':
+        return make_train_transform(mean, std)
+    if kind == 'val':
+        return make_val_transform(mean, std)
+    return None
+
+
 def _ddp_training_worker(rank: int, world_size: int, model_class, model_kwargs: dict,
                          dataset_class, train_dataset_kwargs: dict, val_dataset_kwargs: dict,
                          parameters_dict: dict, output_model_path: str):
@@ -48,19 +58,29 @@ def _ddp_training_worker(rank: int, world_size: int, model_class, model_kwargs: 
         model = DDP(model, device_ids=[rank], output_device=rank)
         
         # Recreate datasets in each worker (avoids pickling issues)
-        train_dataset = dataset_class(**train_dataset_kwargs)
-        val_dataset = dataset_class(**val_dataset_kwargs)
-        
-        # Convert parameters dict back to Params object
         parameters = Params()
         parameters.params = parameters_dict
+        parameters = integrate_global_parameters(parameters)
+        mean = parameters.get('mean')
+        std = parameters.get('std')
+
+        # Build transforms inside worker to avoid pickling closure errors
+        train_kwargs = dict(train_dataset_kwargs)
+        val_kwargs = dict(val_dataset_kwargs)
+
+        train_kind = train_kwargs.pop('transform_kind', 'train')
+        val_kind = val_kwargs.pop('transform_kind', 'val')
+        train_transform = _build_transform(train_kind, mean, std)
+        val_transform = _build_transform(val_kind, mean, std)
+
+        train_dataset = dataset_class(transform=train_transform, **train_kwargs)
+        val_dataset = dataset_class(transform=val_transform, **val_kwargs)
         
         # Create samplers for distributed training
         train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
         val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False)
         
         # Training setup from parameters
-        parameters = integrate_global_parameters(parameters)
         batch_size = parameters.get('batch_size', 16)
         num_workers = parameters.get('num_workers', 4)
         prefetch_factor = parameters.get('prefetch_factor', 2)
@@ -216,6 +236,28 @@ def _ddp_training_worker(rank: int, world_size: int, model_class, model_kwargs: 
         cleanup_ddp()
 
 
+def _inject_transform_kind(kwargs: dict, default_kind: str) -> dict:
+    """Strip any transform object (and similar keys), keep a kind flag instead.
+    This prevents pickling errors when spawning DDP workers on Kaggle.
+    """
+    kwargs = dict(kwargs)
+    # Remove possible transform entries
+    transform = kwargs.pop('transform', None)
+    kwargs.pop('train_transform', None)
+    kwargs.pop('val_transform', None)
+    kwargs.pop('augmentation', None)
+
+    kind = default_kind
+    if transform is not None:
+        qn = getattr(transform, '__qualname__', '')
+        if 'train' in qn:
+            kind = 'train'
+        elif 'val' in qn or 'center' in qn:
+            kind = 'val'
+    kwargs['transform_kind'] = kind
+    return kwargs
+
+
 def train_with_ddp_kaggle(model_class, model_kwargs: dict,
                           dataset_class, train_dataset_kwargs: dict, val_dataset_kwargs: dict,
                           parameters: Params, num_gpus: int = None,
@@ -253,6 +295,10 @@ def train_with_ddp_kaggle(model_class, model_kwargs: dict,
     
     # Convert Params to dict for pickling
     parameters_dict = parameters.get_all()
+
+    # Strip non-picklable transforms; keep a transform_kind flag
+    train_dataset_kwargs = _inject_transform_kind(train_dataset_kwargs, default_kind='train')
+    val_dataset_kwargs = _inject_transform_kind(val_dataset_kwargs, default_kind='val')
     
     # Set multiprocessing start method (required for CUDA)
     try:

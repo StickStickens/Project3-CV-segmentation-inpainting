@@ -1,0 +1,34 @@
+stages:
+  train:
+    cmd: python src/train.py
+    deps:
+      - src/train.py
+      - src/models/U_net.py
+      - src/utils/
+      - src/dataset/
+      - global_params.json
+    params:
+      - global_params.json:
+          - train_image_folder
+          - train_annotation_folder
+          - validation_image_folder
+          - validation_annotation_folder
+          - mean
+          - std
+          - num_workers
+      - src/config/uNet_params.json:
+          - batch_size
+          - num_epochs
+          - learning_rate
+          - optimizer
+          - scheduler
+          - use_amp
+    metrics:
+      - mlruns/metrics.json
+    plots:
+      - mlruns/plots.csv:
+          x: epoch
+          y: loss
+
+metrics:
+  - mlruns/metrics.json

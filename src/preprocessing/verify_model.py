@@ -53,16 +53,19 @@ def verify_model_memorization(model, dataset, sample_size=10, params : Params | 
     If `no_augment` is True, rebuild a dataset with a no-augmentation transform
     to provide a clean learning signal for memorization tests.
     """
-    mlflow.set_experiment("Testing_model_overfitting")
-
-    # IMPORTANT: Enable system metrics monitoring
-    mlflow.config.enable_system_metrics_logging()
-    mlflow.config.set_system_metrics_sampling_interval(1)
     if params is None:
         params = Params()
     params = integrate_global_parameters(params)
     params.set('num_epochs', epochs)
+    print(params)
+    memorization_params = Params('src/config/memorization_params.json')
+    Params.overwrite_params(params, memorization_params)
+    print(params)
+    mlflow.set_experiment(params.get('mlflow_experiment', 'Model_Memorization_Check'))
 
+    # IMPORTANT: Enable system metrics monitoring
+    mlflow.config.enable_system_metrics_logging()
+    mlflow.config.set_system_metrics_sampling_interval(1)
     # Optionally replace dataset transforms with a no-augmentation pipeline
     if no_augment:
         mean = params.get("mean", (0.485, 0.456, 0.406))
@@ -73,7 +76,7 @@ def verify_model_memorization(model, dataset, sample_size=10, params : Params | 
     subset = get_random_subset(dataset, sample_size)
     trainer = model_trainer(model)
     trainer.train_model(subset, subset, parameters=params)
-    train_loss = trainer.validate_1_epoch({'CombinedLoss': choose_loss('CombinedLoss', {})}, device=params.get('device', 'cpu'))
+    train_loss = trainer.validate_1_epoch({'CombinedLoss': choose_loss('CombinedLoss', {'ignore_index': params.get('ignore_index', -100)})}, device=params.get('device', 'cpu'))
 
     if train_loss['CombinedLoss'] < 1e-4:
         print("Model successfully memorized the small subset of data.")
