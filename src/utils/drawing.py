@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -39,3 +40,27 @@ def unnormalize_image(image: np.ndarray, mean: list[float], std: list[float]) ->
         Un-normalized image tensor of the same shape as input.
     """
     return image * np.array(std).reshape(1,1, -1) + np.array(mean).reshape(1, 1, -1)
+
+def enlarge_mask(mask: np.ndarray, pixels: int = 5) -> np.ndarray:
+    """
+    Enlarge positive areas (True or 1) in a binary mask.
+    
+    Args:
+        mask: 2D boolean or 0/1 numpy array
+        pixels: number of pixels to grow/dilate
+
+    Returns:
+        np.ndarray of same shape, dtype=bool
+    """
+    # ensure binary uint8
+    mask_uint8 = mask.astype(np.uint8)  # 0 or 1
+    mask_uint8 *= 255  # 0 or 255
+    
+    # create kernel for dilation
+    kernel = np.ones((2*pixels+1, 2*pixels+1), np.uint8)
+    
+    # dilate
+    dilated = cv2.dilate(mask_uint8, kernel, iterations=1)
+    
+    # convert back to boolean
+    return dilated.astype(bool)

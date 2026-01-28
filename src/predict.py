@@ -98,9 +98,9 @@ def predict_image(model: torch.nn.Module, image: np.ndarray,
     
     output = output.cpu().squeeze(0).numpy().astype('uint8')  # Class indices 0-150
     # Save the output mask
-    output = color_np_mask(output)
     if save_image:
-        output_image = Image.fromarray(output, mode='L')
+        output_image = color_np_mask(output)
+        output_image = Image.fromarray(output_image, mode='RGB')
         output_image.save(output_path)
         print(f"Prediction saved to {output_path}")
     return output
